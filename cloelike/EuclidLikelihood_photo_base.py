@@ -208,6 +208,10 @@ class PhotoLikelihoodBase:
         self.baryon_param_keys = tuple(settings.get("baryon_param_keys", ()))
         self.rebin = False
         self.zs = data["z_arr"]
+        # Redshifts of the matter power spectrum: settings["pk_redshifts"] uniform nodes from
+        # 0 to the top of z_arr if given (CAMB takes at most 256), else z_arr itself.
+        n_pk = settings.get("pk_redshifts")
+        self.pk_zs = self.zs if n_pk is None else np.linspace(0.0, np.max(self.zs), int(n_pk))
         if self.mode == "coupled":
             self.mixmat = deepcopy(data.get("mixmat", {}))
         else:
@@ -339,7 +343,7 @@ class PhotoLikelihoodBase:
         background = self.Background(
             **{k: parameters[k] for k in self._BACKGROUND_PARAM_KEYS}
         )
-        lp = self.LinPerturbations(background=background, redshifts=self.zs)
+        lp = self.LinPerturbations(background=background, redshifts=self.pk_zs)
         nl_kwargs = dict(self.settings.get("nonlinear_kwargs", {}))
         nl_kwargs.update({k: parameters[k] for k in self.nonlinear_param_keys})
         if self.baryon_param_keys:
@@ -349,7 +353,7 @@ class PhotoLikelihoodBase:
         nlp = self.NonLinPerturbations(
             background=background,
             linearperturbations=lp,
-            redshifts=self.zs,
+            redshifts=self.pk_zs,
             **nl_kwargs,
         )
         # sigma8_0() self-memoizes by overwriting `nlp.sigma8_0` with its
