@@ -45,13 +45,7 @@ class WLMixin:
         v = super().get_theory_vector_full(parameters)
         _, _, nlp = self._get_perturbations(parameters)
         she = self._get_she_tracer(parameters, nlp)
-        if self.mode == "coupled":
-            cell_all_th = AngularTwoPoint(she, she).get_pseudo_Cl(0, nlp.k, self.mixmat)
-            vec = np.array([cell_all_th[key][0, 0] for key in self.WL_keys]).flatten()
-        else:
-            cell_all_th = AngularTwoPoint(she, she).get_Cl(self.data["ells"], 0, nlp.k)
-            vec = np.array([cell_all_th[key][0, 0] for key in self.WL_keys]).flatten()
-        self.theory_prediction.update(cell_all_th)
+        vec = self._theory_block(she, she, self.WL_keys, nlp, lambda c: c[0, 0])
         return np.concatenate([v, vec])
 
 
@@ -95,13 +89,7 @@ class GCphMixin:
         v = super().get_theory_vector_full(parameters)
         _, _, nlp = self._get_perturbations(parameters)
         pos = self._get_pos_tracer(parameters, nlp)
-        if self.mode == "coupled":
-            cell_all_th = AngularTwoPoint(pos, pos).get_pseudo_Cl(0, nlp.k, self.mixmat)
-            vec = np.array([cell_all_th[key] for key in self.GG_keys]).flatten()
-        else:
-            cell_all_th = AngularTwoPoint(pos, pos).get_Cl(self.data["ells"], 0, nlp.k)
-            vec = np.array([cell_all_th[key] for key in self.GG_keys]).flatten()
-        self.theory_prediction.update(cell_all_th)
+        vec = self._theory_block(pos, pos, self.GG_keys, nlp, lambda c: c)
         return np.concatenate([v, vec])
 
 
@@ -148,13 +136,7 @@ class GGLMixin:
         _, _, nlp = self._get_perturbations(parameters)
         pos = self._get_pos_tracer(parameters, nlp)
         she = self._get_she_tracer(parameters, nlp)
-        if self.mode == "coupled":
-            cell_all_th = AngularTwoPoint(pos, she).get_pseudo_Cl(0, nlp.k, self.mixmat)
-            vec = np.array([cell_all_th[key][0] for key in self.GGL_keys]).flatten()
-        else:
-            cell_all_th = AngularTwoPoint(pos, she).get_Cl(self.data["ells"], 0, nlp.k)
-            vec = np.array([cell_all_th[key][0] for key in self.GGL_keys]).flatten()
-        self.theory_prediction.update(cell_all_th)
+        vec = self._theory_block(pos, she, self.GGL_keys, nlp, lambda c: c[0])
         return np.concatenate([v, vec])
 
 

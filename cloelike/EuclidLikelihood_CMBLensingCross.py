@@ -63,15 +63,7 @@ class CMBLxWLMixin(CMBLensingTracerMixin):
         _, _, nlp = self._get_perturbations(parameters)
         cmbl = self._get_cmbl_tracer(parameters, nlp)
         she = self._get_she_tracer(parameters, nlp)
-        if self.mode == "coupled":
-            cell_all_th = AngularTwoPoint(cmbl, she).get_pseudo_Cl(
-                0, nlp.k, self.mixmat
-            )
-            vec = np.array([cell_all_th[key][0] for key in self.CMBLxWL_keys]).flatten()
-        else:
-            cell_all_th = AngularTwoPoint(cmbl, she).get_Cl(self.data["ells"], 0, nlp.k)
-            vec = np.array([cell_all_th[key][0] for key in self.CMBLxWL_keys]).flatten()
-        self.theory_prediction.update(cell_all_th)
+        vec = self._theory_block(cmbl, she, self.CMBLxWL_keys, nlp, lambda c: c[0])
         return np.concatenate([v, vec])
 
 
@@ -111,15 +103,7 @@ class CMBLxGCMixin(CMBLensingTracerMixin):
         _, _, nlp = self._get_perturbations(parameters)
         cmbl = self._get_cmbl_tracer(parameters, nlp)
         pos = self._get_pos_tracer(parameters, nlp)
-        if self.mode == "coupled":
-            cell_all_th = AngularTwoPoint(cmbl, pos).get_pseudo_Cl(
-                0, nlp.k, self.mixmat
-            )
-            vec = np.array([cell_all_th[key] for key in self.CMBLxGC_keys]).flatten()
-        else:
-            cell_all_th = AngularTwoPoint(cmbl, pos).get_Cl(self.data["ells"], 0, nlp.k)
-            vec = np.array([cell_all_th[key] for key in self.CMBLxGC_keys]).flatten()
-        self.theory_prediction.update(cell_all_th)
+        vec = self._theory_block(cmbl, pos, self.CMBLxGC_keys, nlp, lambda c: c)
         return np.concatenate([v, vec])
 
 

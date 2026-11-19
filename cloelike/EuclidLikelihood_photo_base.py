@@ -6,6 +6,8 @@ from copy import deepcopy
 from cloelib.cosmology.cosmology import Background, Perturbations
 from cloelib.observables.photo import PositionsTracer, ShearTracer
 from cloelib.observables.photo.shear import PBJTATTLoopComputer
+from cloelib.summary_statistics.angular_two_point import AngularTwoPoint
+from scipy.interpolate import CubicSpline
 
 
 def _nonlinear_bias_loop_computer(perturbations):
@@ -120,6 +122,11 @@ class PhotoLikelihoodBase:
               `cloelib.cosmology.cosmology.with_baryon_boost`. Default ().
             - 'nonlinear_kwargs': fixed keyword arguments for NonLinPerturbations
               (e.g. {"nonlinear_model": "mead2020"}). Default {}.
+            - 'coupled_ell_nodes': in coupled mode, compute C_l on sparse multipole nodes
+              (every l from 2 to ``dense_below``, then ``per_decade`` per decade to the
+              top of the mixing matrices) and carry them to every l by a cubic spline of
+              l (l + 1) C_l in ln l, folded into each mixing matrix once; e.g.
+              {"dense_below": 50, "per_decade": 40}. Default None: every l.
             - 'tatt_loop_computer', 'nl_bias_loop_computer': factories called with
               the linear perturbations to build the one-loop kernels for TATT and
               the nonlinear galaxy bias. Default to cloelib's FAST-PT computers.
@@ -216,6 +223,7 @@ class PhotoLikelihoodBase:
             self.mixmat = deepcopy(data.get("mixmat", {}))
         else:
             self.mixmat = None
+        self._coupling = None
 
         if (ells_integration is None) and ("2pcf" in data):
             self.ells_integration = np.arange(2, 40000)
@@ -225,6 +233,60 @@ class PhotoLikelihoodBase:
 
         if ("cells" in data) and ("n_ell_bins" in settings):
             self._prepare()
+
+    @staticmethod
+    def sparse_ells(lmax, dense_below, per_decade):
+        """Multipole nodes: every l in ``2..dense_below``, then log-spaced to ``lmax``."""
+        if lmax <= dense_below:
+            return np.arange(2, lmax + 1)
+        n = max(int(np.ceil(per_decade * np.log10(lmax / dense_below))), 2) + 1
+        tail = np.round(np.geomspace(dense_below, lmax, n)).astype(int)
+        return np.unique(np.concatenate([np.arange(2, dense_below + 1), tail]))
+
+    @staticmethod
+    def interpolation_matrix(nodes, n_ell):
+        """``(n_ell, len(nodes))``: C_l at ``nodes`` to every l < ``n_ell`` by a cubic spline
+        of l (l + 1) C_l in ln l; the l = 0, 1 rows are zero."""
+        matrix = np.zeros((n_ell, len(nodes)))
+        ells = np.arange(2, n_ell)
+        spline = CubicSpline(np.log(nodes), np.diag(nodes * (nodes + 1.0)), axis=0)
+        matrix[2:] = spline(np.log(ells)) / (ells * (ells + 1.0))[:, None]
+        return matrix
+
+    def _build_coupling(self):
+        """The multipoles C_l is computed at in coupled mode, and for each spectrum the
+        operator from C_l there to its bandpowers: its mixing matrix (the EE<-EE component
+        for shear x shear), times the spline to every l when ``coupled_ell_nodes`` is set."""
+        matrices = {}
+        for key, mixmat in self.mixmat.items():
+            m = np.asarray(mixmat.array, dtype=float)
+            matrices[key] = m[0] if key[:2] == ("SHE", "SHE") else m
+        n_ell = max(m.shape[-1] for m in matrices.values())
+        nodes = self.settings.get("coupled_ell_nodes")
+        if nodes is None:
+            self.coupled_ells = np.arange(n_ell)
+            self._coupling = matrices
+            return
+        self.coupled_ells = self.sparse_ells(n_ell - 1, nodes["dense_below"], nodes["per_decade"])
+        spline = self.interpolation_matrix(self.coupled_ells, n_ell)
+        self._coupling = {key: m @ spline[: m.shape[-1]] for key, m in matrices.items()}
+
+    def _theory_block(self, tracer1, tracer2, keys, nlp, component):
+        """The theory of the spectra ``keys`` of one tracer pair, concatenated: in coupled
+        mode their bandpowers, each spectrum's operator (`_build_coupling`) on C_l at the
+        coupled multipoles; decoupled, ``component`` of each packaged C_l at the data's
+        multipoles (kept in ``theory_prediction``)."""
+        two_point = AngularTwoPoint(tracer1, tracer2)
+        if self.mode == "coupled":
+            if self._coupling is None:
+                self._build_coupling()
+            cl = two_point.get_Cl_tensor(self.coupled_ells, 0, nlp.k)
+            return np.concatenate(
+                [self._coupling[key] @ cl[:, key[2] - 1, key[3] - 1] for key in keys]
+            )
+        cells = two_point.get_Cl(self.data["ells"], 0, nlp.k)
+        self.theory_prediction.update(cells)
+        return np.concatenate([np.ravel(component(cells[key])) for key in keys])
 
     def _prepare(self):
         """Perform rebinning if required by settings."""
