@@ -1,3 +1,4 @@
+import jax.numpy as jnp
 import numpy as np
 from cloelib.summary_statistics.angular_two_point import AngularTwoPoint
 from cloelike.EuclidLikelihood_photo_base import PhotoLikelihoodBase
@@ -46,7 +47,7 @@ class WLMixin:
         _, _, nlp = self._get_perturbations(parameters)
         she = self._get_she_tracer(parameters, nlp)
         vec = self._theory_block(she, she, self.WL_keys, nlp, lambda c: c[0, 0])
-        return np.concatenate([v, vec])
+        return jnp.concatenate([v, vec])
 
 
 class GCphMixin:
@@ -90,7 +91,7 @@ class GCphMixin:
         _, _, nlp = self._get_perturbations(parameters)
         pos = self._get_pos_tracer(parameters, nlp)
         vec = self._theory_block(pos, pos, self.GG_keys, nlp, lambda c: c)
-        return np.concatenate([v, vec])
+        return jnp.concatenate([v, vec])
 
 
 class GGLMixin:
@@ -137,7 +138,7 @@ class GGLMixin:
         pos = self._get_pos_tracer(parameters, nlp)
         she = self._get_she_tracer(parameters, nlp)
         vec = self._theory_block(pos, she, self.GGL_keys, nlp, lambda c: c[0])
-        return np.concatenate([v, vec])
+        return jnp.concatenate([v, vec])
 
 
 class BNTMixin:

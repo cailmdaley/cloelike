@@ -1,3 +1,4 @@
+import jax.numpy as jnp
 import numpy as np
 from cloelib.summary_statistics.angular_two_point import AngularTwoPoint
 from cloelike.EuclidLikelihood_photo_base import PhotoLikelihoodBase
@@ -16,13 +17,10 @@ class CMBLensingTracerMixin:
     def _get_cmbl_tracer(self, parameters, nlp):
         """Build (and cache) the CMBLensingTracer for the given parameters/nlp, so
         CMBLxWL and CMBLxGC do not each rebuild it within the same call."""
-        key = self._cosmo_key(parameters)
-        cached = getattr(self, "_cmbl_tracer_cache", None)
-        if cached is not None and cached[0] == key:
-            return cached[1]
-        tracer = CMBLensingTracer(nlp, self.zs)
-        self._cmbl_tracer_cache = (key, tracer)
-        return tracer
+        return self._memo(
+            "_cmbl_tracer_cache", parameters, self._cosmo_key(parameters),
+            lambda: CMBLensingTracer(nlp, self.zs),
+        )
 
 
 class CMBLxWLMixin(CMBLensingTracerMixin):
@@ -64,7 +62,7 @@ class CMBLxWLMixin(CMBLensingTracerMixin):
         cmbl = self._get_cmbl_tracer(parameters, nlp)
         she = self._get_she_tracer(parameters, nlp)
         vec = self._theory_block(cmbl, she, self.CMBLxWL_keys, nlp, lambda c: c[0])
-        return np.concatenate([v, vec])
+        return jnp.concatenate([v, vec])
 
 
 class CMBLxGCMixin(CMBLensingTracerMixin):
@@ -104,7 +102,7 @@ class CMBLxGCMixin(CMBLensingTracerMixin):
         cmbl = self._get_cmbl_tracer(parameters, nlp)
         pos = self._get_pos_tracer(parameters, nlp)
         vec = self._theory_block(cmbl, pos, self.CMBLxGC_keys, nlp, lambda c: c)
-        return np.concatenate([v, vec])
+        return jnp.concatenate([v, vec])
 
 
 class EuclidLikelihood_CMBLxWL(CMBLxWLMixin, PhotoLikelihoodBase):

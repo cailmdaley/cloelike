@@ -1,4 +1,6 @@
 import warnings
+import jax
+import jax.numpy as jnp
 import numpy as np
 from functools import lru_cache
 from typing import Protocol, runtime_checkable
@@ -281,12 +283,12 @@ class PhotoLikelihoodBase:
             if self._coupling is None:
                 self._build_coupling()
             cl = two_point.get_Cl_tensor(self.coupled_ells, 0, nlp.k)
-            return np.concatenate(
+            return jnp.concatenate(
                 [self._coupling[key] @ cl[:, key[2] - 1, key[3] - 1] for key in keys]
             )
         cells = two_point.get_Cl(self.data["ells"], 0, nlp.k)
         self.theory_prediction.update(cells)
-        return np.concatenate([np.ravel(component(cells[key])) for key in keys])
+        return jnp.concatenate([jnp.ravel(component(cells[key])) for key in keys])
 
     def _prepare(self):
         """Perform rebinning if required by settings."""
@@ -386,6 +388,20 @@ class PhotoLikelihoodBase:
         selected.update({k: parameters[k] for k in optional if k in parameters})
         return selected
 
+    def _memo(self, slot, parameters, values, build):
+        """``build()``, reused while ``values`` are unchanged. When any of them is traced
+        (the likelihood under ``jax.jit`` or ``jax.vmap``), values cannot be compared, and it
+        is reused only for the same ``parameters`` dict, i.e. within one evaluation."""
+        traced = any(isinstance(v, jax.core.Tracer) for v in values)
+        cached = getattr(self, slot, None)
+        if cached is not None:
+            key, value = cached
+            if key is parameters if traced else (isinstance(key, tuple) and key == values):
+                return value
+        value = build()
+        setattr(self, slot, (parameters if traced else tuple(values), value))
+        return value
+
     def _get_perturbations(self, parameters):
         """Build (and cache) Background/LinPerturbations/NonLinPerturbations for
         the given parameters.
@@ -398,10 +414,14 @@ class PhotoLikelihoodBase:
         any of those values rebuilds it, while repeated calls with an unchanged
         cosmology (e.g. only nuisance parameters varying) reuse it.
         """
-        key = self._cosmo_key(parameters)
-        cached = getattr(self, "_perturbations_cache", None)
-        if cached is not None and cached[0] == key:
-            return cached[1]
+        return self._memo(
+            "_perturbations_cache",
+            parameters,
+            self._cosmo_key(parameters),
+            lambda: self._build_perturbations(parameters),
+        )
+
+    def _build_perturbations(self, parameters):
         background = self.Background(
             **{k: parameters[k] for k in self._BACKGROUND_PARAM_KEYS}
         )
@@ -423,11 +443,9 @@ class PhotoLikelihoodBase:
         # instance -- here, rather than in each mixin (which would fail on
         # the second mixin to see this shared, cached nlp).
         self.derived["sigma8_0"] = nlp.sigma8_0()
-        result = (background, lp, nlp)
-        self._perturbations_cache = (key, result)
         # Loop computers depend only on the cosmology; drop the old ones.
         self._loop_computers = {}
-        return result
+        return background, lp, nlp
 
     def _cosmo_key(self, parameters):
         """The same cache key used by `_get_perturbations`, exposed so tracer
@@ -458,10 +476,13 @@ class PhotoLikelihoodBase:
         """Build (and cache) the PositionsTracer for the given parameters/nlp,
         so GCph and GGL do not each rebuild it within the same call."""
         nuisance = self._select(parameters, self.full_pos_keys, self.optional_pos_keys)
-        key = self._cosmo_key(parameters) + tuple(sorted(nuisance.items()))
-        cached = getattr(self, "_pos_tracer_cache", None)
-        if cached is not None and cached[0] == key:
-            return cached[1]
+        values = self._cosmo_key(parameters) + tuple(v for _, v in sorted(nuisance.items()))
+        return self._memo(
+            "_pos_tracer_cache", parameters, values,
+            lambda: self._build_pos_tracer(parameters, nlp, nuisance),
+        )
+
+    def _build_pos_tracer(self, parameters, nlp, nuisance):
         # The nonlinear bias options are only passed when selected, so the linear
         # bias models also work with cloelib versions without the nonlinear bias.
         nl_bias_kwargs = {}
@@ -478,17 +499,19 @@ class PhotoLikelihoodBase:
             include_rsd=self.settings.get("include_rsd", False),
             **nl_bias_kwargs,
         )
-        self._pos_tracer_cache = (key, tracer)
         return tracer
 
     def _get_she_tracer(self, parameters, nlp):
         """Build (and cache) the ShearTracer for the given parameters/nlp, so
         WL and GGL do not each rebuild it within the same call."""
         nuisance = self._select(parameters, self.full_she_keys, self.optional_she_keys)
-        key = self._cosmo_key(parameters) + tuple(sorted(nuisance.items()))
-        cached = getattr(self, "_she_tracer_cache", None)
-        if cached is not None and cached[0] == key:
-            return cached[1]
+        values = self._cosmo_key(parameters) + tuple(v for _, v in sorted(nuisance.items()))
+        return self._memo(
+            "_she_tracer_cache", parameters, values,
+            lambda: self._build_she_tracer(parameters, nlp, nuisance),
+        )
+
+    def _build_she_tracer(self, parameters, nlp, nuisance):
         if self.ia_model == "TATT":
             loop_computer = self._get_loop_computer(
                 "tatt", PBJTATTLoopComputer, parameters
@@ -503,7 +526,6 @@ class PhotoLikelihoodBase:
             ia_model=self.ia_model,
             tatt_loop_computer=loop_computer,
         )
-        self._she_tracer_cache = (key, tracer)
         return tracer
 
     def get_masking_vector(self):
